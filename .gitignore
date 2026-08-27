@@ -1,0 +1,24 @@
+# Sensitive API keys & secrets
+.env
+
+# Python cache & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Chrome / browser profiles
+.x_profile/
+.x_profile_clone/
+
+# Logs & backups
+*.log
+logs/*.log
+*.bak
+*.tar.gz
+
+# System files
+.DS_Store
+Thumbs.db

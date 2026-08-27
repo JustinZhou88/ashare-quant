@@ -1,0 +1,204 @@
+"""国际市场与地缘环境 —— A股的外部输入。
+
+A股不是封闭市场。隔夜美股、港股、汇率、地缘事件都会传导进来，
+尤其体现在**次日开盘跳空**上。本模块把这些外部变量拉齐成日频序列，
+供两处使用：
+  1. 国际宏观分析师角色（写进 LLM 上下文）
+  2. 可回测的宏观因子（走和其他因子一样的统计检验）
+
+已实测的传导强度（2812 个交易日，沪深300）：
+  - 隔夜标普500 → A股开盘跳空：相关 +0.43，beta 0.27，t=+25.3
+  - 昨日恒生    → A股当日收益：相关 +0.56，beta 0.56，t=+36.0（最强的单一外部变量）
+  - **不对称性**：标普跌 2% 时 A股平均跳空 -1.16%，涨 2% 时只跳 +0.64%，
+    坏消息传导强度约为好消息的两倍
+对比：两融因子的增量 alpha 只有 t=1.60。外部影响是本项目测到的最强关系。
+
+但要注意：跳空发生在开盘瞬间，无法捕捉。这些变量的正确用途是
+**决定要不要建仓、建多少仓**，不是预测能赚多少。
+
+数据源都经过实测：
+  - 美股三大指数: akshare index_us_stock_sina（2004 年至今，22 年）
+  - 恒生指数: 腾讯（A股与港股同时段，联动最强）
+  - 人民币汇率: akshare currency_boc_sina（注意原始单位是每 100 美元）
+  - 地缘概率: Polymarket（见 sentiment.py）
+
+时区处理（**关键**）：美股 T 日收盘对应北京时间 T+1 凌晨，
+所以美股 T 日的涨跌对 A股 **T+1** 交易日有效。本模块用 `align_to_ashare`
+统一做这个平移，避免把美股当日行情当成 A股当日可得信息（未来函数）。
+"""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import requests
+
+from ..config import DATA_DIR
+
+_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0"
+
+# VIX 在 akshare 的几个美股接口里都取不到（实测 .VIX / ^VIX 均报错），
+# 改用标普的已实现波动率作为恐慌代理。不是隐含波动率，但同样能反映风险情绪，
+# 且免费、历史完整、口径可复现。
+US_INDICES = {".INX": "sp500", ".IXIC": "nasdaq", ".DJI": "dow"}
+
+
+def _dir() -> Path:
+    p = Path(DATA_DIR) / "global"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def load_us_index(symbol: str = ".INX", refresh: bool = False) -> pd.DataFrame:
+    """美股指数日线。symbol: .INX / .IXIC / .DJI / .VIX"""
+    name = US_INDICES.get(symbol, symbol.lstrip("."))
+    cache = _dir() / f"us_{name}.csv"
+    if cache.exists() and not refresh:
+        return pd.read_csv(cache, parse_dates=["date"], index_col="date")
+    import akshare as ak
+    try:
+        d = ak.index_us_stock_sina(symbol=symbol)
+    except Exception:                                          # noqa: BLE001
+        # .VIX 在 index_us_stock_sina 里取不到，退回美股日线接口
+        d = ak.stock_us_daily(symbol=symbol.lstrip(".") if symbol != ".VIX" else "^VIX")
+    d["date"] = pd.to_datetime(d["date"])
+    d = d.set_index("date").sort_index()[["open", "high", "low", "close", "volume"]]
+    d = d.apply(pd.to_numeric, errors="coerce")
+    d.to_csv(cache, index_label="date")
+    return d
+
+
+def load_hk_index(code: str = "hkHSI", refresh: bool = False) -> pd.DataFrame:
+    """恒生指数（腾讯）。A股与港股同时段交易，联动性强。"""
+    cache = _dir() / f"{code}.csv"
+    if cache.exists() and not refresh:
+        return pd.read_csv(cache, parse_dates=["date"], index_col="date")
+    rows, cur_end = [], "2050-01-01"
+    for _ in range(20):
+        u = (f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+             f"?param={code},day,1990-01-01,{cur_end},640,")
+        try:
+            j = requests.get(u, headers={"User-Agent": _UA}, timeout=20).json()
+        except Exception:                                      # noqa: BLE001
+            break
+        a = ((j.get("data") or {}).get(code) or {}).get("day") or []
+        if not a:
+            break
+        rows = a + rows
+        if len(a) < 640:
+            break
+        cur_end = (pd.Timestamp(a[0][0]) - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        time.sleep(0.3)
+    if not rows:
+        return pd.DataFrame()
+    d = pd.DataFrame([r[:6] for r in rows],
+                     columns=["date", "open", "close", "high", "low", "volume"])
+    d["date"] = pd.to_datetime(d["date"])
+    d = d.drop_duplicates("date").set_index("date").sort_index()
+    d = d.apply(pd.to_numeric, errors="coerce")
+    d.to_csv(cache, index_label="date")
+    return d
+
+
+def load_cny(refresh: bool = False) -> pd.DataFrame:
+    """人民币汇率（中行折算价）。贬值预期通常压制 A股外资流入。"""
+    cache = _dir() / "cny.csv"
+    if cache.exists() and not refresh:
+        return pd.read_csv(cache, parse_dates=["date"], index_col="date")
+    import akshare as ak
+    d = ak.currency_boc_sina(symbol="美元", start_date="20150101",
+                             end_date=pd.Timestamp.today().strftime("%Y%m%d"))
+    col = "央行中间价" if "央行中间价" in d.columns else d.columns[-1]
+    # 中行报价单位是「每 100 美元兑人民币」，除以 100 换成常见的 6.xx 口径
+    out = pd.DataFrame({"usdcny": pd.to_numeric(d[col], errors="coerce") / 100.0})
+    out.index = pd.to_datetime(d["日期"])
+    out.index.name = "date"
+    out = out.sort_index().dropna()
+    out.to_csv(cache, index_label="date")
+    return out
+
+
+def align_to_ashare(series: pd.Series, ashare_dates: pd.DatetimeIndex,
+                    shift_days: int = 1) -> pd.Series:
+    """把外盘序列对齐到 A股交易日。
+
+    shift_days=1：美股 T 日收盘（北京时间 T+1 凌晨）→ 影响 A股 T+1。
+    这一步不做，就是把 A股收盘后才发生的美股行情当成当天可得信息 —— 未来函数。
+    港股与 A股同时段，用 shift_days=0 但仍需 ffill 对齐假期差异。
+    """
+    s = series.copy()
+    if shift_days:
+        s.index = s.index + pd.Timedelta(days=shift_days)
+    return s.reindex(s.index.union(ashare_dates)).ffill().reindex(ashare_dates)
+
+
+def build_global_panel(ashare_dates: pd.DatetimeIndex,
+                       refresh: bool = False) -> pd.DataFrame:
+    """所有外部变量对齐到 A股交易日轴，返回日频宽表（已做时区平移）。"""
+    out = pd.DataFrame(index=ashare_dates)
+    for sym, name in US_INDICES.items():
+        try:
+            d = load_us_index(sym, refresh=refresh)
+            px = align_to_ashare(d["close"], ashare_dates, shift_days=1)
+            out[f"{name}_close"] = px
+            out[f"{name}_ret1"] = align_to_ashare(
+                d["close"].pct_change(), ashare_dates, shift_days=1)
+            out[f"{name}_ret5"] = align_to_ashare(
+                d["close"].pct_change(5), ashare_dates, shift_days=1)
+        except Exception as e:                                 # noqa: BLE001
+            print(f"  ! {name} 失败: {type(e).__name__}: {str(e)[:60]}")
+    # 标普已实现波动率（20日年化）作为 VIX 代理
+    if "sp500_ret1" in out:
+        out["sp500_rvol20"] = out["sp500_ret1"].rolling(20, min_periods=10).std() \
+            * np.sqrt(252)
+        out["sp500_rvol_rank"] = out["sp500_rvol20"].rolling(250, min_periods=100) \
+            .rank(pct=True)
+
+    try:
+        hk = load_hk_index(refresh=refresh)
+        if not hk.empty:
+            out["hsi_ret1"] = align_to_ashare(hk["close"].pct_change(),
+                                              ashare_dates, shift_days=0)
+            out["hsi_ret5"] = align_to_ashare(hk["close"].pct_change(5),
+                                              ashare_dates, shift_days=0)
+    except Exception as e:                                     # noqa: BLE001
+        print(f"  ! 恒生 失败: {type(e).__name__}")
+    try:
+        cny = load_cny(refresh=refresh)
+        out["usdcny"] = align_to_ashare(cny["usdcny"], ashare_dates, shift_days=1)
+        out["cny_chg20"] = align_to_ashare(cny["usdcny"].pct_change(20),
+                                           ashare_dates, shift_days=1)
+    except Exception as e:                                     # noqa: BLE001
+        print(f"  ! 汇率 失败: {type(e).__name__}")
+    return out
+
+
+def to_text(gp: pd.DataFrame, as_of: pd.Timestamp,
+            geo_readings: list | None = None) -> str:
+    """渲染成 LLM 上下文的「国际环境」段落。"""
+    if gp.empty or as_of not in gp.index:
+        return ""
+    r = gp.loc[as_of]
+
+    def f(k, pct=True):
+        v = r.get(k)
+        if v is None or not np.isfinite(v):
+            return "n/a"
+        return f"{v:+.2%}" if pct else f"{v:.2f}"
+
+    L = [f"【国际环境 @ {as_of.date()}（均为 A股开盘前已知）】",
+         f"隔夜美股: 标普 {f('sp500_ret1')}  纳指 {f('nasdaq_ret1')}  "
+         f"道指 {f('dow_ret1')}",
+         f"近5日: 标普 {f('sp500_ret5')}  纳指 {f('nasdaq_ret5')}",
+         f"标普已实现波动率(20日年化): {f('sp500_rvol20')}"
+         f"，历史分位 {f('sp500_rvol_rank', False)}（1.0=近一年最恐慌）",
+         f"港股恒生: 昨日 {f('hsi_ret1')}  近5日 {f('hsi_ret5')}",
+         f"美元兑人民币: {f('usdcny', False)}（近20日 {f('cny_chg20')}，"
+         f"数值上升=人民币贬值）"]
+    if geo_readings:
+        from .sentiment import to_text as sent_text
+        L.append(sent_text(geo_readings))
+    return "\n".join(L)

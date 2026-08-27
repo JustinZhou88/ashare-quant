@@ -1,0 +1,166 @@
+"""推荐记账 —— 整个系统里最重要的一个文件。
+
+理由：LLM 选股的有效性**无法用历史回测证明**（模型知识里包含了历史答案）。
+唯一诚实的验证方式是**从今天开始，把每一次推荐记下来，等样本攒够**。
+
+没有这一步，一年后你只会记得那几次赚钱的推荐，忘掉亏钱的 ——
+这是人类记忆的必然，不是自制力问题。所以必须让机器记。
+
+记录的执行假设与回测完全一致：**推荐日次一交易日开盘买入**。
+这样纸上交易的结果才和 aq/engine 的回测口径可比。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+JOURNAL = Path("journal/recommendations.csv")
+HORIZONS = (5, 10, 20)
+
+
+def _ensure() -> None:
+    JOURNAL.parent.mkdir(parents=True, exist_ok=True)
+
+
+def record(scan_date: str, picks: list[dict], facts: dict[str, dict],
+           run_meta: dict | None = None) -> pd.DataFrame:
+    """把一次扫描的推荐追加进流水账。同一天重复扫描会覆盖当天记录。"""
+    _ensure()
+    rows = []
+    for p in picks or []:
+        sym = str(p.get("symbol", "")).zfill(6)
+        f = facts.get(sym, {})
+        rows.append({
+            "scan_date": scan_date, "symbol": sym,
+            "name": p.get("name") or f.get("name", ""),
+            "score": p.get("score"),
+            "reason": str(p.get("reason", ""))[:500],
+            "risks": " | ".join(p.get("risks") or [])[:300],
+            "entry_note": str(p.get("entry_note", ""))[:200],
+            "factor_rank": f.get("factor_rank"),
+            "price_at_scan": f.get("price"),
+            "ret_20d_before": f.get("ret_20d"),
+            "vol_60d_ann": f.get("vol_60d_ann"),
+            "pos_in_60d_range": f.get("pos_in_60d_range"),
+            "rz_chg_20d": f.get("rz_chg_20d"),
+            "dry_run": bool((run_meta or {}).get("dry_run", False)),
+            "model": (run_meta or {}).get("model", ""),
+        })
+    new = pd.DataFrame(rows)
+    if JOURNAL.exists():
+        old = pd.read_csv(JOURNAL, dtype={"symbol": str})
+        old = old[old["scan_date"] != scan_date]
+        new = pd.concat([old, new], ignore_index=True) if len(new) else old
+    if len(new):
+        new = new.sort_values(["scan_date", "symbol"]).reset_index(drop=True)
+        new.to_csv(JOURNAL, index=False)
+    return new
+
+
+def update_performance(panel, index_df: pd.DataFrame | None = None) -> pd.DataFrame:
+    """给所有历史推荐补算前瞻收益。
+
+    执行假设：推荐日**次一交易日开盘**买入，持有 N 个交易日后按收盘价计价。
+    未来数据还不够的记录留 NaN，下次再补。
+    """
+    if not JOURNAL.exists():
+        return pd.DataFrame()
+    j = pd.read_csv(JOURNAL, dtype={"symbol": str})
+    if j.empty:
+        return j
+
+    dates = panel.dates
+    for h in HORIZONS:
+        j[f"ret_{h}d"] = np.nan
+    j["entry_px"] = np.nan
+    if index_df is not None:
+        for h in HORIZONS:
+            j[f"bench_{h}d"] = np.nan
+
+    for i, r in j.iterrows():
+        sym = str(r["symbol"]).zfill(6)
+        if sym not in panel.symbols:
+            continue
+        sd = pd.Timestamp(r["scan_date"])
+        after = dates[dates > sd]
+        if len(after) == 0:
+            continue
+        d0 = after[0]                                  # 次一交易日
+        op = panel.open.loc[d0, sym]           # 后复权 —— 只用于算收益
+        if not np.isfinite(op) or op <= 0:
+            continue
+        # entry_px 是给人看的，必须和 price_at_scan 一样用不复权价。
+        # 混用口径会让「扫描价 / 买入价」两列显示成 2~3 倍的假差价
+        # （倍数因股而异，就是各自的累计复权因子）。收益仍用复权价算。
+        raw_op = np.nan
+        if hasattr(panel, "raw_open"):
+            try:
+                raw_op = float(panel.raw_open.loc[d0, sym])
+            except Exception:                                  # noqa: BLE001
+                raw_op = np.nan
+        j.at[i, "entry_px"] = raw_op if np.isfinite(raw_op) and raw_op > 0 else float(op)
+        for h in HORIZONS:
+            if len(after) <= h:
+                continue
+            dh = after[h]
+            cl = panel.close.loc[dh, sym]
+            if np.isfinite(cl):
+                j.at[i, f"ret_{h}d"] = float(cl / op - 1)
+        if index_df is not None:
+            ic = index_df["close"].reindex(dates).ffill()
+            b0 = ic.get(d0, np.nan)
+            for h in HORIZONS:
+                if len(after) > h and np.isfinite(b0) and b0 > 0:
+                    bh = ic.get(after[h], np.nan)
+                    if np.isfinite(bh):
+                        j.at[i, f"bench_{h}d"] = float(bh / b0 - 1)
+
+    for h in HORIZONS:
+        if f"bench_{h}d" in j:
+            j[f"excess_{h}d"] = j[f"ret_{h}d"] - j[f"bench_{h}d"]
+    j.to_csv(JOURNAL, index=False)
+    return j
+
+
+def report(j: pd.DataFrame | None = None, exclude_dry_run: bool = True) -> str:
+    """累计战绩。样本不够时**明确说不够**，不要给出误导性的胜率。"""
+    if j is None:
+        if not JOURNAL.exists():
+            return "还没有任何推荐记录。"
+        j = pd.read_csv(JOURNAL, dtype={"symbol": str})
+    if exclude_dry_run and "dry_run" in j:
+        j = j[~j["dry_run"].astype(bool)]
+    if j.empty:
+        return "还没有真实（非 dry-run）推荐记录。"
+
+    L = [f"累计推荐 {len(j)} 次，覆盖 {j['scan_date'].nunique()} 个扫描日，"
+         f"{j['symbol'].nunique()} 只股票。"]
+    for h in HORIZONS:
+        col = f"ret_{h}d"
+        if col not in j:
+            continue
+        s = j[col].dropna()
+        if len(s) == 0:
+            L.append(f"  {h}日：还没有已到期的样本")
+            continue
+        exc = j[f"excess_{h}d"].dropna() if f"excess_{h}d" in j else pd.Series(dtype=float)
+        line = (f"  {h}日：{len(s)} 个样本，平均 {s.mean():+.2%}，"
+                f"胜率 {(s > 0).mean():.0%}，中位数 {s.median():+.2%}")
+        if len(exc):
+            t = exc.mean() / (exc.std(ddof=1) / np.sqrt(len(exc))) if exc.std(ddof=1) > 0 else 0
+            line += f"，超额 {exc.mean():+.2%}（t={t:.2f}）"
+        L.append(line)
+
+    n = len(j[f"ret_{HORIZONS[-1]}d"].dropna()) if f"ret_{HORIZONS[-1]}d" in j else 0
+    L.append("")
+    if n < 30:
+        L.append(f"⚠️ 已到期样本只有 {n} 个，**远不足以判断系统是否有效**。"
+                 f"按每周 3 只算，需要累计约 4~6 个月才有初步参考价值，"
+                 f"1 年以上才谈得上统计检验。现在的胜率数字请当噪声看。")
+    else:
+        L.append(f"已到期样本 {n} 个。注意：超额收益的 t 值需要 > 1.96 才算显著，"
+                 f"而且这里没有做多重检验校正。")
+    return "\n".join(L)

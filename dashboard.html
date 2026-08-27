@@ -1,0 +1,114 @@
+<title>A股量化系统 · 总览</title><style>
+:root{--paper:#f6f7f9;--surface:#fff;--surface-2:#eef1f5;--text:#161b23;--text-2:#4d5765;
+--text-3:#7a8492;--line:#dce0e7;--line-2:#c5cbd4;--brass:#9a6c1c;--brass-soft:#f2e6cd;
+--up:#c23a3a;--down:#1f8a5f;--ok:#1f8a5f;--off:#a0a8b4;
+--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+--cjk:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif}
+@media (prefers-color-scheme:dark){:root{--paper:#0e1218;--surface:#161b23;--surface-2:#1e242e;
+--text:#e6eaf0;--text-2:#a5afbd;--text-3:#78828f;--line:#242b35;--line-2:#333c48;
+--brass:#d6a24e;--brass-soft:#33280f;--up:#e05a5a;--down:#3aab7d;--ok:#3aab7d;--off:#5c6672}}
+:root[data-theme=dark]{--paper:#0e1218;--surface:#161b23;--surface-2:#1e242e;--text:#e6eaf0;
+--text-2:#a5afbd;--text-3:#78828f;--line:#242b35;--line-2:#333c48;--brass:#d6a24e;
+--brass-soft:#33280f;--up:#e05a5a;--down:#3aab7d;--ok:#3aab7d;--off:#5c6672}
+:root[data-theme=light]{--paper:#f6f7f9;--surface:#fff;--surface-2:#eef1f5;--text:#161b23;
+--text-2:#4d5765;--text-3:#7a8492;--line:#dce0e7;--line-2:#c5cbd4;--brass:#9a6c1c;
+--brass-soft:#f2e6cd;--up:#c23a3a;--down:#1f8a5f;--ok:#1f8a5f;--off:#a0a8b4}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--text);font-family:var(--cjk);line-height:1.7}
+.wrap{max-width:1080px;margin:0 auto;padding:48px 24px 80px}
+h1{font-size:30px;margin:0;letter-spacing:-.01em}
+h2{font-size:18px;margin:44px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line-2)}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+color:var(--brass);margin-bottom:10px}
+.sub{color:var(--text-2);font-size:14px;margin-top:8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:16px 18px}
+.card .l{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+color:var(--text-3);margin-bottom:6px}
+.card .v{font-family:var(--mono);font-size:26px;font-weight:600;font-variant-numeric:tabular-nums;
+line-height:1.15}
+.card .d{font-size:12.5px;color:var(--text-2);margin-top:4px}
+.scroller{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;min-width:520px;font-size:13.5px}
+th,td{text-align:left;padding:8px 14px 8px 0;border-bottom:1px solid var(--line)}
+th{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+color:var(--text-3);font-weight:500;white-space:nowrap}
+td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;
+white-space:nowrap;padding-right:0}
+.pill{font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:3px;font-weight:600}
+.pill.on{background:var(--brass-soft);color:var(--brass)}
+.pill.off{background:var(--surface-2);color:var(--off)}
+.up{color:var(--up)}.down{color:var(--down)}
+.pick{background:var(--surface);border:1px solid var(--line-2);border-radius:6px;
+padding:20px;margin:12px 0}
+.pick-h{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:10px}
+.pick-h .c{font-family:var(--mono);font-size:18px;font-weight:600}
+.pick-h .nm{font-size:17px;font-weight:650}
+.pick-h .px{margin-left:auto;font-family:var(--mono);color:var(--text-2)}
+.pick p{margin:6px 0;font-size:14px;color:var(--text-2)}
+.pick b{color:var(--text)}
+.note{background:var(--surface-2);border-left:2px solid var(--brass);padding:11px 15px;
+font-size:13.5px;color:var(--text-2);margin:12px 0}
+.todo{display:grid;grid-template-columns:auto 1fr;gap:10px 14px;font-size:14px;align-items:start}
+.badge{font-family:var(--mono);font-size:10px;padding:3px 8px;border-radius:2px;
+white-space:nowrap;font-weight:600;margin-top:3px}
+.badge.you{background:var(--brass-soft);color:var(--brass)}
+.badge.time{background:var(--surface-2);color:var(--text-3);border:1px dashed var(--line-2)}
+code{font-family:var(--mono);font-size:.86em;background:var(--surface-2);padding:1px 5px;
+border-radius:3px}
+.foot{margin-top:40px;padding-top:18px;border-top:1px solid var(--line);
+font-size:12.5px;color:var(--text-3)}
+@media(max-width:640px){.pick-h .px{margin-left:0;width:100%}}
+</style>
+<div class="wrap">
+<div class="eyebrow">系统总览</div><h1>A股量化选股</h1>
+<p class="sub">生成于 2026-08-15 15:00 · 全部数据来自本地，不联网</p>
+<h2>关键状态</h2><div class="grid">
+<div class="card"><div class="l">股票池</div><div class="v">2805 只</div><div class="d">数据截至 2026-08-13</div></div>
+<div class="card"><div class="l">累计推荐</div><div class="v">4</div><div class="d">已到期 20 日样本 0 个</div></div>
+<div class="card"><div class="l">因子层样本外</div><div class="v">0.89</div><div class="d">夏普 · 年化 +23.2% · 回撤 −28.5%</div></div>
+<div class="card"><div class="l">LLM 层证据</div><div class="v" style="color:var(--off)">0/30</div><div class="d">达到 30 个样本才有初步结论</div></div>
+</div>
+<h2>最近一次推荐 · 2026-08-11</h2>
+<div class="pick"><div class="pick-h"><span class="c">600879</span><span class="nm">航天电子</span><span class="pill on">信心 8/10</span>
+<span class="px">15.53 元</span>
+</div>
+<p><b>理由</b> 融资余额下降22.1%、融券余量剧减35.7%，浮筹与空头去杠杆极其彻底；近5日涨跌幅-0.4%处于横盘筑底期（60日区间0.17），结合68.4%的高波动率具备良好的埋伏反弹弹性。</p>
+<p><b>风险</b> 当前价格距MA5为-3.4%，超短期处于微幅震荡寻底状态；近250日涨幅+55.4%，若大盘持续下行可能面临长线获利盘抛压</p>
+<p><b>进场</b> 开盘不追高，可逢低在距MA20（约15.47附近）平稳沉淀时分批挂单埋伏</p>
+<div class="note">历史类比 313,939 个样本 · 预期最高价中位 <b>16.83</b>（+8.4%），见顶中位第 8 日 · 摸到 +15% 26.7% · 触发止损 14.5% · 期望收益 +2.18%</div>
+</div>
+<div class="pick"><div class="pick-h"><span class="c">600343</span><span class="nm">航天动力</span><span class="pill on">信心 7/10</span>
+<span class="px">19.58 元</span>
+</div>
+<p><b>理由</b> 量化因子排名全池第1，60日年化波动率高达80.3%极具爆发潜能；融资余额大减23.6%出清杠杆盘，60日区间位置0.20，近5日量比0.98且无大阳线拉升，符合温和筑底埋伏形态。</p>
+<p><b>风险</b> 距MA20有+6.6%的乖离，短期可能面临技术性回踩；无近60日分析师研报覆盖，缺乏机构明牌共识</p>
+<p><b>进场</b> 避免追高，等待价格回踩MA5或贴近均线密集区时吸纳</p>
+<div class="note">历史类比 218,263 个样本 · 预期最高价中位 <b>21.35</b>（+9.0%），见顶中位第 8 日 · 摸到 +15% 29.7% · 触发止损 16.6% · 期望收益 +2.06%</div>
+</div>
+<div class="note"><b>大盘观点</b>　沪深300指数处于60日线下方（4664点）的空头震荡环境，操作上须严格控制仓位、逢低埋伏并防范大盘系统性回撤风险。</div>
+<h2>累计战绩</h2>
+<p class="sub">还没有已到期的样本。每周扫描后运行 <code>python scan_weekly.py --journal</code> 更新。</p>
+<h2>数据与接口</h2><div class="scroller"><table><thead><tr><th>数据源</th><th class="n">规模</th><th>最新</th><th>位置</th></tr></thead><tbody>
+<tr><td>行情日线</td><td class="n">2805 只</td><td>2026-08-13</td><td><code>data_cache/</code></td></tr>
+<tr><td>融资融券</td><td class="n">2520 只</td><td>—</td><td><code>data_cache/alt/</code></td></tr>
+<tr><td>券商研报</td><td class="n">146,181 条</td><td>2026-08-03</td><td><code>data_cache/alt/reports.csv</code></td></tr>
+<tr><td>股东户数</td><td class="n">173,902 条</td><td>2026-08-03</td><td><code>data_cache/alt/holders.csv</code></td></tr>
+<tr><td>情绪源 · x_influencer</td><td class="n">无数据</td><td>—</td><td><code>sentiment_feed/x_influencer</code></td></tr>
+<tr><td>情绪源 · guba</td><td class="n">1 个文件</td><td>—</td><td><code>sentiment_feed/guba</code></td></tr>
+<tr><td>情绪源 · mediacrawler</td><td class="n">无数据</td><td>—</td><td><code>sentiment_feed/mediacrawler</code></td></tr>
+</tbody></table></div>
+<div class="scroller"><table><thead><tr><th>模型 / Key</th><th>状态</th><th>说明</th></tr></thead><tbody>
+<tr><td>Gemini <code>GEMINI_API_KEY</code></td><td><span class="pill on">已设置</span></td><td>免费 1500 次/天，够用 250 倍</td></tr>
+<tr><td>Grok <code>XAI_API_KEY</code></td><td><span class="pill off">未设置</span></td><td>可实时检索 X，替代爬虫</td></tr>
+<tr><td>DeepSeek <code>DEEPSEEK_API_KEY</code></td><td><span class="pill off">未设置</span></td><td>约 ¥0.15/次扫描</td></tr>
+<tr><td>智谱 <code>ZHIPU_API_KEY</code></td><td><span class="pill off">未设置</span></td><td>glm-4-flash 免费</td></tr>
+</tbody></table></div>
+<h2>还缺什么</h2><div class="todo">
+<span class="badge you">待你处理</span><div><b>申请 XAI_API_KEY（可选）</b><br><span style="color:var(--text-2)">Grok 能官方检索 X，替代爬虫；不需要登录也不会封号。</span></div>
+<span class="badge you">待你处理</span><div><b>X 情绪源尚无数据</b><br><span style="color:var(--text-2)">两条路：Grok 检索（需 key），或 tools/x_scrape.py（需登录 X）。</span></div>
+<span class="badge time">需要时间</span><div><b>记账积累到 30 个已到期样本（现 0 个）</b><br><span style="color:var(--text-2)">LLM 层的有效性无法回测，只能前瞻验证。约需 3 个月。</span></div>
+</div>
+<h2>每周操作</h2><div class="scroller"><table><thead><tr><th>做什么</th><th>命令</th></tr></thead><tbody><tr><td>更新数据（约 12 分钟）</td><td><code>python update_data.py</code></td></tr><tr><td>扫描出推荐</td><td><code>python scan_weekly.py --universe universe_full.txt</code></td></tr><tr><td>更新战绩</td><td><code>python scan_weekly.py --journal</code></td></tr><tr><td>刷新本面板</td><td><code>python dashboard.py</code></td></tr></tbody></table></div>
+<p class="foot">仅供研究，不构成投资建议。因子层有统计支撑（2804 只全市场、6 折滚动前推、多重检验校正）；LLM 层与外部情绪源目前**没有任何有效性证据**，正在前瞻记账验证中。</p>
+</div>

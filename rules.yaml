@@ -1,0 +1,45 @@
+hard_filters:
+  exclude_st: true
+  exclude_new_days: 250
+  exclude_boards: []
+  min_mcap: 5000000000
+  max_mcap: null
+  min_amount_20d: 100000000
+  min_vol_60d: null
+  max_vol_60d: null
+  exclude_industries: []
+  exclude_symbols: []
+  max_consecutive_limit_up: 1
+soft_prefs:
+  likes:
+  - 在上涨启动**之前**埋伏，不追已经涨起来的。宁可早一点，不要晚
+  - 处于下跌末端或横盘筑底、但还没启动的位置
+  - 找周期的低点介入 —— 用户明确说要「精准埋伏每个周期」
+  avoids:
+  - 连续涨停的票（用户明确禁止，已在硬约束里拦掉）
+  - ST / *ST（用户明确禁止，已在硬约束里拦掉）
+  - 已经拉出三根以上大阳线、明显在右侧的
+  fast_money_definition:
+  - 目标：10 个交易日内涨 15%
+  - 越快越好，上限越高越好 —— 同等条件下优先选弹性大的
+  - 注意：这是目标不是承诺。不要为了凑这个数去推荐高波动垃圾股
+  - 对应的风险预算是 -15%，即盈亏比 1:1，所以胜率必须高于 50% 才有正期望
+risk:
+  init_cash: 100000               # 模拟盘本金。单只预算 = 本金 × position_size，
+                                  # 它决定了买得起多贵的股票（A股 1 手 = 100 股）
+  max_positions: 5
+  position_size: 0.12
+  stop_loss: 0.15
+  take_profit: null
+  max_hold_days: 15
+  monthly_drawdown_halt: 0.15
+  dynamic_sizing:
+    enabled: true
+    kelly_fraction: 0.5
+    cut_on_global_risk: true
+    cut_on_drawdown: 0.1
+schedule:
+  scan_day: 周五
+  scan_time: '16:00'
+  n_candidates_to_llm: 20
+  n_recommendations: 5

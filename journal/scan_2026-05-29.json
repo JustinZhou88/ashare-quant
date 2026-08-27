@@ -1,0 +1,39 @@
+{
+  "picks": [
+    {
+      "symbol": "600550",
+      "score": 0,
+      "reason": "[DRY-RUN] 未做真实分析",
+      "risks": [
+        "未配置 API key"
+      ],
+      "entry_note": "-"
+    },
+    {
+      "symbol": "300409",
+      "score": 0,
+      "reason": "[DRY-RUN] 未做真实分析",
+      "risks": [
+        "未配置 API key"
+      ],
+      "entry_note": "-"
+    },
+    {
+      "symbol": "601606",
+      "score": 0,
+      "reason": "[DRY-RUN] 未做真实分析",
+      "risks": [
+        "未配置 API key"
+      ],
+      "entry_note": "-"
+    }
+  ],
+  "note": "[DRY-RUN] 这是占位输出，不是投资判断。设置 DEEPSEEK_API_KEY 后重跑。",
+  "raw": "{\n  \"picks\": [\n    {\n      \"symbol\": \"600550\",\n      \"score\": 0,\n      \"reason\": \"[DRY-RUN] 未做真实分析\",\n      \"risks\": [\n        \"未配置 API key\"\n      ],\n      \"entry_note\": \"-\"\n    },\n    {\n      \"symbol\": \"300409\",\n      \"score\": 0,\n      \"reason\": \"[DRY-RUN] 未做真实分析\",\n      \"risks\": [\n        \"未配置 API key\"\n      ],\n      \"entry_note\": \"-\"\n    },\n    {\n      \"symbol\": \"601606\",\n      \"score\": 0,\n      \"reason\": \"[DRY-RUN] 未做真实分析\",\n      \"risks\": [\n        \"未配置 API key\"\n      ],\n      \"entry_note\": \"-\"\n    }\n  ],\n  \"note\": \"[DRY-RUN] 这是占位输出，不是投资判断。设置 DEEPSEEK_API_KEY 后重跑。\"\n}",
+  "_analyst_views": {
+    "trend": "[DRY-RUN 占位输出] 未配置 DEEPSEEK_API_KEY，未做真实分析。",
+    "capital": "[DRY-RUN 占位输出] 未配置 DEEPSEEK_API_KEY，未做真实分析。",
+    "risk_screen": "[DRY-RUN 占位输出] 未配置 DEEPSEEK_API_KEY，未做真实分析。"
+  },
+  "_debate": "[DRY-RUN 占位输出] 未配置 DEEPSEEK_API_KEY，未做真实分析。"
+}

@@ -1,0 +1,253 @@
+"""增量更新所有数据 —— 每次扫描前跑一次。
+
+    python update_data.py               # 更新行情 + 指数 + 国际环境
+    python update_data.py --all         # 再加上两融、研报、股东户数
+    python update_data.py --workers 8
+
+为什么可以安全增量追加：本项目用的是**后复权**，复权因子锚定在上市日，
+新增分红只影响新 bar，不改写历史。若用前复权，每次分红都会改写全部历史价格，
+增量更新就会产生前后不一致的数据。这是当初选后复权的原因之一。
+
+更新时会**重叠拉取最近 10 个交易日**并校验重叠段是否一致 ——
+如果数据源修订了历史（除权、更正），会打印警告让你知道。
+
+各类数据的更新频率：
+  行情/指数/国际环境  每个交易日
+  两融               每个交易日（交易所次日公布，滞后 1 日）
+  研报               每个交易日
+  股东户数           季度（新报告期出来时才需要）
+"""
+
+from __future__ import annotations
+
+import argparse
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from aq.config import BENCHMARK, DATA_DIR
+from aq.data import loader as L
+from aq.data.universe import from_file
+
+_lock = threading.Lock()
+OVERLAP = 10          # 重叠校验的交易日数
+
+
+def update_stock(symbol: str, start_buffer: int = OVERLAP) -> tuple[str, int, bool]:
+    """增量更新单只股票。返回 (状态, 新增行数, 是否发现历史被改写)。"""
+    cache = Path(DATA_DIR) / f"{symbol}.csv"
+    if not cache.exists():
+        df = L.load_stock(symbol, start="2016-01-01")
+        return ("新建", len(df), False)
+
+    old = pd.read_csv(cache, parse_dates=["date"], index_col="date")
+    if old.empty:
+        return ("空缓存", 0, False)
+    last = old.index.max()
+    # 临时 bar（收盘后用实时行情补的）必须强制重取：它的后复权价是用
+    # 昨日系数外推的，除权日会偏。不重取就永远修不回来。
+    has_prov = bool(old.get("provisional", pd.Series(dtype=bool)).fillna(False).any())
+    if not has_prov and last >= pd.Timestamp.today().normalize() - pd.Timedelta(days=1):
+        return ("已最新", 0, False)
+    if has_prov:
+        # 从最早那根临时 bar 之前开始重取
+        prov_first = old.index[old["provisional"].fillna(False).astype(bool)].min()
+        last = min(last, prov_first - pd.Timedelta(days=1))
+
+    beg = (last - pd.Timedelta(days=start_buffer * 2)).strftime("%Y-%m-%d")
+    code = L.tx_code(symbol)
+    adj = L._tx_kline(code, "hfq", start=beg)
+    raw = L._tx_kline(code, "", start=beg)
+    if adj.empty or raw.empty:
+        return ("拉取失败", 0, False)
+
+    new = L._assemble(adj, raw, name=str(old["name"].iloc[0]) if "name" in old else "",
+                      symbol=symbol)
+
+    # 重叠段一致性校验：源头改写历史时给出警告
+    both = old.index.intersection(new.index)
+    drift = False
+    if len(both) >= 3:
+        a = old.loc[both, "close"].to_numpy(float)
+        b = new.loc[both, "close"].to_numpy(float)
+        ok = np.isfinite(a) & np.isfinite(b) & (a > 0)
+        if ok.sum() >= 3 and np.nanmax(np.abs(b[ok] / a[ok] - 1)) > 0.01:
+            drift = True
+
+    # 收盘前拉到的当日 bar 是**未完成**的（收盘价还在变），用它算信号是错的。
+    # A股 15:00 收盘，留 10 分钟给数据源结算；未到点就丢掉当天这根。
+    now = pd.Timestamp.now()
+    if now.hour * 60 + now.minute < 15 * 60 + 10:
+        new = new[new.index.normalize() < now.normalize()]
+    if new.empty:
+        return ("已最新", 0, False)
+
+    merged = pd.concat([old[~old.index.isin(new.index)], new]).sort_index()
+    merged = merged[~merged.index.duplicated(keep="last")]
+    # 厂商正式数据覆盖后，临时标记清掉
+    if "provisional" in merged.columns:
+        merged.loc[merged.index.isin(new.index), "provisional"] = False
+    added = len(merged) - len(old)
+    merged.to_csv(cache, index_label="date")
+    return ("更新", max(added, 0), drift)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--universe", default="universe_full.txt")
+    ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--all", action="store_true",
+                    help="同时更新两融/研报/股东户数（慢很多）")
+    ap.add_argument("--skip-prices", action="store_true")
+    ap.add_argument("--no-today", action="store_true",
+                    help="不用实时行情补当日 bar（只要厂商结算好的日线）")
+    args = ap.parse_args()
+
+    uni = args.universe if Path(args.universe).exists() else "universe.txt"
+    syms = from_file(uni)
+    t0 = time.time()
+
+    # ------------------------------------------------ 行情
+    if not args.skip_prices:
+        print(f"【1】增量更新行情：{len(syms)} 只，{args.workers} 线程")
+        stat = {"更新": 0, "已最新": 0, "新建": 0, "失败": 0, "n": 0,
+                "rows": 0, "drift": []}
+
+        def work(s: str):
+            try:
+                st, n, dr = update_stock(s)
+            except Exception:                                  # noqa: BLE001
+                st, n, dr = "拉取失败", 0, False
+            with _lock:
+                stat["n"] += 1
+                stat["rows"] += n
+                key = st if st in stat else "失败"
+                stat[key] = stat.get(key, 0) + 1
+                if dr:
+                    stat["drift"].append(s)
+                if stat["n"] % 200 == 0:
+                    el = time.time() - t0
+                    print(f"  {stat['n']}/{len(syms)}  新增 {stat['rows']} 行  "
+                          f"({el/60:.1f} 分钟)", flush=True)
+
+        with ThreadPoolExecutor(max_workers=args.workers) as ex:
+            for _ in as_completed([ex.submit(work, s) for s in syms]):
+                pass
+        print(f"  完成：更新 {stat['更新']} 只，已最新 {stat['已最新']} 只，"
+              f"失败 {stat['失败']} 只，共新增 {stat['rows']} 行")
+        if stat["drift"]:
+            print(f"  ⚠️ {len(stat['drift'])} 只的历史价格被数据源改写"
+                  f"（前 5 只: {stat['drift'][:5]}）—— 通常是除权或数据更正，"
+                  f"若数量异常请全量重下")
+
+    # ------------------------------------------------ 当日补齐
+    # 腾讯的历史日线跑批比实时行情晚很多（实测收盘一小时后仍只给到昨天）。
+    # 收盘后用实时接口把今天这根补上，就能当晚扫描，不用等到第二天。
+    if not args.skip_prices and not args.no_today:
+        now = pd.Timestamp.now()
+        after_close = now.hour * 60 + now.minute >= 15 * 60 + 5
+        if not after_close:
+            print(f"\n【1.5】当日补齐：现在 {now:%H:%M}，未到收盘后 15:05，跳过")
+        elif now.dayofweek >= 5:
+            print("\n【1.5】当日补齐：周末，跳过")
+        else:
+            print(f"\n【1.5】当日补齐（用实时行情，{now:%m-%d %H:%M}）")
+            today = L.fetch_today_bars(syms)
+            if today.empty:
+                print("  实时接口没返回数据")
+            else:
+                today = today[today["date"].dt.normalize() == now.normalize()]
+                n_ok = sum(L.append_today(r["symbol"], r)
+                           for _, r in today.iterrows())
+                print(f"  补齐 {n_ok}/{len(today)} 只 -> {now.date()}")
+                # 指数也要补 —— 否则大盘环境和基准对比会差一天
+                if L.append_today_index(BENCHMARK):
+                    print(f"  指数 {BENCHMARK} 已补齐")
+                print("  注：后复权价用昨日复权系数外推，除权股会有小偏差，"
+                      "厂商日线出来后会被自动覆盖修正")
+
+    # ------------------------------------------------ 指数与国际环境
+    print("\n【2】更新指数与国际环境")
+    try:
+        idx = L.load_index(BENCHMARK, refresh=True, start="2015-01-01")
+        print(f"  沪深300: {len(idx)} 根，至 {idx.index.max().date()}")
+    except Exception as e:                                     # noqa: BLE001
+        print(f"  ! 指数更新失败: {type(e).__name__}")
+
+    from aq.data import global_ctx as G
+    for sym, name in G.US_INDICES.items():
+        try:
+            d = G.load_us_index(sym, refresh=True)
+            print(f"  {name}: {len(d)} 根，至 {d.index.max().date()}")
+        except Exception as e:                                 # noqa: BLE001
+            print(f"  ! {name} 失败: {type(e).__name__}")
+    try:
+        hk = G.load_hk_index(refresh=True)
+        print(f"  恒生: {len(hk)} 根，至 {hk.index.max().date()}")
+    except Exception as e:                                     # noqa: BLE001
+        print(f"  ! 恒生失败: {type(e).__name__}")
+    try:
+        cny = G.load_cny(refresh=True)
+        print(f"  人民币汇率: {len(cny)} 根，至 {cny.index.max().date()}")
+    except Exception as e:                                     # noqa: BLE001
+        print(f"  ! 汇率失败: {type(e).__name__}")
+
+    # ------------------------------------------------ 股票列表
+    try:
+        m = L.fetch_all_symbols(refresh=True)
+        print(f"  股票列表: {len(m)} 只（含最新市值/名称，用于 ST 识别）")
+    except Exception as e:                                     # noqa: BLE001
+        print(f"  ! 股票列表失败: {type(e).__name__}")
+
+    if not args.all:
+        print(f"\n完成，用时 {(time.time()-t0)/60:.1f} 分钟。"
+              f"\n两融/研报/股东户数未更新 —— 加 --all 参数，或单独跑对应脚本。")
+        return
+
+    # ------------------------------------------------ 慢速数据
+    print("\n【3】更新两融（增量）")
+    from aq.data.altdata import load_margin, load_reports
+    alt = Path(DATA_DIR) / "alt"
+    stale = []
+    for s in syms:
+        f = alt / f"margin_{s}.csv"
+        if not f.exists():
+            continue
+        try:
+            d = pd.read_csv(f, parse_dates=["date"], index_col="date")
+            if d.empty or d.index.max() < pd.Timestamp.today() - pd.Timedelta(days=4):
+                stale.append(s)
+        except Exception:                                      # noqa: BLE001
+            stale.append(s)
+    print(f"  {len(stale)} 只需要更新")
+
+    def mwork(s: str):
+        try:
+            load_margin(s, start="2016-01-01", refresh=True)
+        except Exception:                                      # noqa: BLE001
+            pass
+
+    if stale:
+        with ThreadPoolExecutor(max_workers=args.workers) as ex:
+            done = 0
+            for _ in as_completed([ex.submit(mwork, s) for s in stale]):
+                done += 1
+                if done % 200 == 0:
+                    print(f"    两融 {done}/{len(stale)}", flush=True)
+
+    print("\n【4】更新研报")
+    try:
+        r = load_reports(start="2017-01-01", refresh=True)
+        print(f"  研报 {len(r)} 篇，至 {r['publish_date'].max().date()}")
+    except Exception as e:                                     # noqa: BLE001
+        print(f"  ! 研报失败: {type(e).__name__}")
+
+    print(f"\n全部完成，用时 {(time.time()-t0)/60:.1f} 分钟")
+
+
+if __name__ == "__main__":
+    main()
